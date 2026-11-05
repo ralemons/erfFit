@@ -1,0 +1,9 @@
+2
+2,1,10
+UED:USR:MMN:09:02,X Motor - Laser Room Extra DL,145:30:155,True
+UED:USR:MMN:06:05,Y Motor - OPA Delay,30,False
+SCOP:AS01:SC01:AI_CH1_AREA
+2,1,10
+UED:USR:MMN:09:02,X Motor - Laser Room Extra DL,150,False
+UED:USR:MMN:06:05,Y Motor - OPA Delay,10:30:40,True
+SCOP:AS01:SC01:AI_CH1_AREA

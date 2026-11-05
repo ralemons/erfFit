@@ -1,0 +1,13 @@
+# Ignore claude files and planning
+*.md
+
+# Ignore specific motor config files and testing data
+exampleData/
+*.txt
+
+# Ignore python build files
+__pycache__
+*.py[cod]
+
+# Add back specific files
+!test.txt
