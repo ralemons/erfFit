@@ -1,5 +1,6 @@
-# Ignore claude files and planning
+# Ignore claude files, planning, editing
 *.md
+*.swp
 
 # Ignore specific motor config files
 *.txt
