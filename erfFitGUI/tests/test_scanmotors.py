@@ -7,41 +7,75 @@
 # by two scans, matched by PV rather than by list order, with the device count
 # equal to the number of DISTINCT PVs rather than the number of motor slots.
 #
-# pcdsdevices is not installed on S3DF, so the real Newport cannot be imported.
-# Newport derives from ophyd's EpicsMotor, which IS here, so that is substituted
-# in sys.modules before erfFit is imported. Everything being tested - attribute
-# storage, .prefix matching, instance identity - comes from ophyd's Device, so
-# the substitution does not weaken the test. matplotlib is stubbed for the same
-# reason erfFit_GUI never imports it: plotERF must not open a window here.
+# pcdsdevices is not installed on S3DF, so neither real motor class can be
+# imported. Both are substituted in sys.modules before erfFit is imported, each
+# keeping the base it really has: a Newport is an ophyd EpicsMotor, and a
+# TwinCAT axis is an ophyd PVPositioner. Both of those ARE here. Everything
+# being tested - attribute storage, .prefix matching, instance identity - comes
+# from ophyd's Device, which is common to the two, so the substitution does not
+# weaken the test. matplotlib is stubbed for the same reason erfFit_GUI never
+# imports it: plotERF must not open a window here.
+#
+# The test PVs carry a type field now. erfFit.motorClass is pure string
+# matching on 'MMN' and 'MMS' and no longer consults pcdsdevices, so a PV
+# naming no type is refused outright and the old typeless T:M:n PVs would fail
+# before any of this could be checked. They are MMN, with one MMS pair below
+# for the mixed case, which is what UED actually has now.
 #
 # Nothing connects and nothing moves. The PVs below do not exist, and
-# constructing a device is not a move.
+# constructing a device is not a move. Do not probe .moving or .position on
+# these instances: those are properties that do channel access, and on a PV
+# that does not exist they block for the connection timeout.
 
 import os
 import sys
+import tempfile
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ophyd import EpicsMotor
+from ophyd import Component as Cpt
+from ophyd import EpicsMotor, EpicsSignal, EpicsSignalRO, PVPositioner
 
-# erfFit now asks pcdsdevices which class a PV names, and refuses anything that
-# is not an EpicsMotorInterface. The stub therefore has to supply both: a base
-# standing in for EpicsMotorInterface, and a _GetMotorClass. The stub resolver
-# returns the stub class for every PV, because the test PVs below carry no type
-# field - resolving them the way the real table does would make them the bare
-# ophyd fallback, which erfFit is now right to reject.
+
 class StubMotor(EpicsMotor):
 	pass
 
+
+# Stands for TwinCATMotorInterface, which is declared
+# TwinCATMotorInterface(FltMvInterface, PVPositioner) and is NOT an EpicsMotor.
+# scan.__init__ isinstance checks against this, so it has to be a real base of
+# the leaf below rather than the same class.
+class StubTwinCATBase(PVPositioner):
+	pass
+
+
+# Stands for TwinCATMREAxis. The components mirror the real ones: a TwinCAT axis
+# on a tcmotor record drives .VAL/.RBV/.DMOV, but presents them under the
+# PVPositioner names, which is the whole reason erfFit.isMoving has to dispatch
+# on type.
+class StubTwinCAT(StubTwinCATBase):
+	setpoint = Cpt(EpicsSignal, '.VAL')
+	readback = Cpt(EpicsSignal, '.RBV')
+	done = Cpt(EpicsSignalRO, '.DMOV')
+	done_value = 1
+
+
 fakePcds = types.ModuleType('pcdsdevices')
+
 fakeMotor = types.ModuleType('pcdsdevices.epics_motor')
 fakeMotor.Newport = StubMotor
 fakeMotor.EpicsMotorInterface = EpicsMotor
-fakeMotor._GetMotorClass = lambda pv: StubMotor
+
+fakeTwinCAT = types.ModuleType('pcdsdevices.twincat_motor')
+fakeTwinCAT.TwinCATMotorInterface = StubTwinCATBase
+fakeTwinCAT.TwinCATMREAxis = StubTwinCAT
+
 fakePcds.epics_motor = fakeMotor
+fakePcds.twincat_motor = fakeTwinCAT
 sys.modules['pcdsdevices'] = fakePcds
 sys.modules['pcdsdevices.epics_motor'] = fakeMotor
+sys.modules['pcdsdevices.twincat_motor'] = fakeTwinCAT
 
 fakeMpl = types.ModuleType('matplotlib')
 fakePlt = types.ModuleType('matplotlib.pyplot')
@@ -91,16 +125,16 @@ def main():
 
 	print('\n=== getMotor: one device per PV ===')
 	master = {}
-	check('first call builds it', erfFit.getMotor('T:M:1', 'a', master).prefix, 'T:M:1')
+	check('first call builds it', erfFit.getMotor('T:MMN:1', 'a', master).prefix, 'T:MMN:1')
 	check('asking again gives the SAME object',
-		erfFit.getMotor('T:M:1', 'b', master) is erfFit.getMotor('T:M:1', 'c', master), True)
+		erfFit.getMotor('T:MMN:1', 'b', master) is erfFit.getMotor('T:MMN:1', 'c', master), True)
 	check('a different PV is a different object',
-		erfFit.getMotor('T:M:2', 'd', master) is not master['T:M:1'], True)
+		erfFit.getMotor('T:MMN:2', 'd', master) is not master['T:MMN:1'], True)
 	check('master list holds both', len(master), 2)
 	# Without a dict there is nowhere to share through, so each call builds one.
-	check('no dict given: standalone device', erfFit.getMotor('T:M:8', 'e').prefix, 'T:M:8')
+	check('no dict given: standalone device', erfFit.getMotor('T:MMN:8', 'e').prefix, 'T:MMN:8')
 	check('no dict given: not shared',
-		erfFit.getMotor('T:M:8', 'e') is erfFit.getMotor('T:M:8', 'e'), False)
+		erfFit.getMotor('T:MMN:8', 'e') is erfFit.getMotor('T:MMN:8', 'e'), False)
 
 	print('\n=== parsePositions ===')
 	check('scanning range is a count of POINTS', len(erfFit.parsePositions('24.1:30:24.9', True)), 30)
@@ -119,8 +153,8 @@ def main():
 	print('\n=== scan.addMotor keeps the four lists index matched ===')
 	shared = {}
 	s = erfFit.scan()
-	s.addMotor(['T:M:1', 'X Motor', '24.1:30:24.9', True], shared)
-	s.addMotor(['T:M:2', 'Y Motor', '9', False], shared)
+	s.addMotor(['T:MMN:1', 'X Motor', '24.1:30:24.9', True], shared)
+	s.addMotor(['T:MMN:2', 'Y Motor', '9', False], shared)
 	check('two motors', len(s.motors), 2)
 	check('positions aligned', (len(s.positions[0]), s.positions[1]), (30, 9.0))
 	check('indep aligned', s.indep, [True, False])
@@ -128,17 +162,17 @@ def main():
 	check('every list the same length',
 		len(set([len(s.motors), len(s.positions), len(s.indep), len(s.userInput)])), 1)
 	checkRaises('a 3 field userInput is refused',
-		lambda: erfFit.scan().addMotor(['T:M:1', 'X', '9'], shared), TypeError)
+		lambda: erfFit.scan().addMotor(['T:MMN:1', 'X', '9'], shared), TypeError)
 
 	print('\n=== the point: two scans, same motors, different parameters ===')
 	# gued_knifeEdge.txt in miniature: X scans while Y is held, then the other
 	# way round. Under the old layout this needed four devices for two motors.
 	master2 = {}
 	first, second = erfFit.scan(), erfFit.scan()
-	first.addMotor(['T:M:1', 'X', '24.1:30:24.9', True], master2)
-	first.addMotor(['T:M:2', 'Y', '9', False], master2)
-	second.addMotor(['T:M:1', 'X', '22', False], master2)
-	second.addMotor(['T:M:2', 'Y', '11:30:12.3', True], master2)
+	first.addMotor(['T:MMN:1', 'X', '24.1:30:24.9', True], master2)
+	first.addMotor(['T:MMN:2', 'Y', '9', False], master2)
+	second.addMotor(['T:MMN:1', 'X', '22', False], master2)
+	second.addMotor(['T:MMN:2', 'Y', '11:30:12.3', True], master2)
 	check('the devices are shared', first.motors[0] is second.motors[0], True)
 	check('2 devices for 4 motor slots', len(master2), 2)
 	check('scan 1 roles', first.indep, [True, False])
@@ -149,45 +183,111 @@ def main():
 	print('\n=== updateMotors matches by PV, not by list order ===')
 	s2 = erfFit.scan()
 	order = {}
-	s2.addMotor(['T:M:1', 'X', '24.1:30:24.9', True], order)
-	s2.addMotor(['T:M:2', 'Y', '9', False], order)
-	s2.updateMotors([['T:M:2', 'Y', '11:30:12.3', True], ['T:M:1', 'X', '22', False]])
+	s2.addMotor(['T:MMN:1', 'X', '24.1:30:24.9', True], order)
+	s2.addMotor(['T:MMN:2', 'Y', '9', False], order)
+	s2.updateMotors([['T:MMN:2', 'Y', '11:30:12.3', True], ['T:MMN:1', 'X', '22', False]])
 	check('reversed input, roles still by PV', s2.indep, [False, True])
 	check('positions followed the PV too', (s2.positions[0], len(s2.positions[1])), (22.0, 30))
-	check('the devices were not replaced', s2.motors[0].prefix, 'T:M:1')
+	check('the devices were not replaced', s2.motors[0].prefix, 'T:MMN:1')
 	check('userInput was rewritten', s2.userInput[0][2], '22')
 
 	# Every motor is re-stamped on every call. Updating only what changed
 	# would leave a stale indep=True, and runConfig would then scan that motor
 	# a second time instead of holding it: a wrong scan, not an error.
 	checkRaises('too few inputs refused',
-		lambda: s2.updateMotors([['T:M:1', 'X', '22', False]]), ValueError)
+		lambda: s2.updateMotors([['T:MMN:1', 'X', '22', False]]), ValueError)
 	checkRaises('a PV not in this scan refused',
-		lambda: s2.updateMotors([['T:M:9', 'Q', '1', False], ['T:M:2', 'Y', '1:3:2', True]]), ValueError)
+		lambda: s2.updateMotors([['T:MMN:9', 'Q', '1', False], ['T:MMN:2', 'Y', '1:3:2', True]]), ValueError)
 	checkRaises('no scanning motor refused',
-		lambda: s2.updateMotors([['T:M:1', 'X', '22', False], ['T:M:2', 'Y', '9', False]]), ValueError)
+		lambda: s2.updateMotors([['T:MMN:1', 'X', '22', False], ['T:MMN:2', 'Y', '9', False]]), ValueError)
 	checkRaises('two scanning motors refused',
-		lambda: s2.updateMotors([['T:M:1', 'X', '1:3:2', True], ['T:M:2', 'Y', '1:3:2', True]]), ValueError)
+		lambda: s2.updateMotors([['T:MMN:1', 'X', '1:3:2', True], ['T:MMN:2', 'Y', '1:3:2', True]]), ValueError)
 	checkRaises('a flat list refused',
-		lambda: s2.updateMotors(['T:M:1', 'X', '22', False]), TypeError)
+		lambda: s2.updateMotors(['T:MMN:1', 'X', '22', False]), TypeError)
 
-	mine = ['T:M:1', 'X', '22', False]
-	s2.updateMotors([mine, ['T:M:2', 'Y', '1:3:2', True]])
+	mine = ['T:MMN:1', 'X', '22', False]
+	s2.updateMotors([mine, ['T:MMN:2', 'Y', '1:3:2', True]])
 	check('userInput is copied, not held', s2.userInput[0] is mine, False)
 
 	print('\n=== scan(motorList=...) ===')
-	devices = [master2['T:M:1'], master2['T:M:2']]
+	devices = [master2['T:MMN:1'], master2['T:MMN:2']]
 	built = erfFit.scan(motorList=devices)
 	check('a device list is accepted', len(built.motors), 2)
 	# A motorList says which motors, not what they do.
 	check('parameters start empty', built.indep, [None, None])
-	built.updateMotors([['T:M:1', 'X', '24.1:30:24.9', True], ['T:M:2', 'Y', '9', False]])
+	built.updateMotors([['T:MMN:1', 'X', '24.1:30:24.9', True], ['T:MMN:2', 'Y', '9', False]])
 	check('updateMotors fills them in', built.indep, [True, False])
 	check('the list was copied', built.motors is devices, False)
 	checkRaises('a list of strings refused',
-		lambda: erfFit.scan(motorList=['T:M:1']), TypeError)
+		lambda: erfFit.scan(motorList=['T:MMN:1']), TypeError)
 	checkRaises('a bare data PV string refused',
 		lambda: erfFit.scan(dataPVList='SCOP:X'), TypeError)
+
+	print('\n=== one scan, two motor types ===')
+	# What UED has now: the new chamber motor is a TwinCAT axis on an MMS PV
+	# and the knife edge motor beside it is still a Newport on an MMN. The two
+	# classes have no common base below FltMvInterface, so every list that
+	# holds both has to be happy with that - and scan.__init__ checks a tuple
+	# of the two bases precisely so a mixed motorList is accepted.
+	mixed = {}
+	twinCAT = erfFit.getMotor('UED:UM1:MMS:02', 'X Motor', mixed)
+	newport = erfFit.getMotor('T:MMN:4', 'Y Motor', mixed)
+	check('the MMS built a TwinCAT axis', isinstance(twinCAT, StubTwinCAT), True)
+	check('the MMN built a Newport', isinstance(newport, StubMotor), True)
+	check('and they really are different classes',
+		type(twinCAT) is type(newport), False)
+	# The sharing guarantee has to hold per PV regardless of type, or a scan
+	# and a jog row would drive separate objects for the TwinCAT motor.
+	check('asking again gives the SAME TwinCAT object',
+		erfFit.getMotor('UED:UM1:MMS:02', 'again', mixed) is twinCAT, True)
+	check('two devices for two PVs', len(mixed), 2)
+
+	mixedScan = erfFit.scan()
+	mixedScan.addMotor(['UED:UM1:MMS:02', 'X Motor', '-37.0:30:-38.0', True], mixed)
+	mixedScan.addMotor(['T:MMN:4', 'Y Motor', '14.5', False], mixed)
+	check('addMotor took both', len(mixedScan.motors), 2)
+	check('no extra devices were built', len(mixed), 2)
+	check('the scanning motor is the TwinCAT one',
+		erfFit.scanMotorIndex(mixedScan), 0)
+	check('positions still index matched',
+		(len(mixedScan.positions[0]), mixedScan.positions[1]), (30, 14.5))
+	# scan(motorList=...) is the other door in, and it type checks. A mixed
+	# list going through it is the case the tuple check exists for: under the
+	# old single class check the TwinCAT motor would be refused here.
+	bothTypes = erfFit.scan(motorList=[twinCAT, newport])
+	check('a mixed motorList is accepted', len(bothTypes.motors), 2)
+	bothTypes.updateMotors([
+		['UED:UM1:MMS:02', 'X Motor', '-37.0:30:-38.0', True],
+		['T:MMN:4', 'Y Motor', '14.5', False]])
+	check('updateMotors matched both by PV', bothTypes.indep, [True, False])
+
+	print('\n=== loadConfig on a mixed config ===')
+	# The same thing through the file, because loadConfig is how a scan is
+	# actually built at UED and addMotor resolves the class per line. Written
+	# here rather than read from the config directory: the real configs are
+	# gitignored, so a checkout cannot be relied on to have one.
+	mixedText = (
+		'1\n'
+		'2,1,10\n'
+		'UED:UM1:MMS:02,X Motor,-37.0:30:-38.0,True\n'
+		'T:MMN:4,Y Motor,14.5,False\n'
+		'SCOP:AS01:SC01:AI_CH1_AREA\n')
+	handle, mixedPath = tempfile.mkstemp(prefix = 'mixedTypes', suffix = '.txt')
+	with os.fdopen(handle, 'w') as out:
+		out.write(mixedText)
+	try:
+		fromFile = {}
+		loaded = erfFit.loadConfig(mixedPath, fromFile)
+		check('one scan loaded', len(loaded), 1)
+		check('two motors in it', len(loaded[0].motors), 2)
+		check('the MMS line is a TwinCAT axis',
+			isinstance(loaded[0].motors[0], StubTwinCAT), True)
+		check('the MMN line is a Newport',
+			isinstance(loaded[0].motors[1], StubMotor), True)
+		check('both went into the master dict', len(fromFile), 2)
+		check('indep came off the file', loaded[0].indep, [True, False])
+	finally:
+		os.unlink(mixedPath)
 
 	print('\n=== loadConfig on the real configs ===')
 	for name in ('gued_knifeEdge.txt', 'test.txt'):
@@ -285,8 +385,8 @@ def main():
 	# second scan would overwrite the first scan's data.
 	twin = [erfFit.scan(), erfFit.scan()]
 	twinDict = {}
-	twin[0].addMotor(['T:M:5', 'Shared', '1:5:2', True], twinDict)
-	twin[1].addMotor(['T:M:5', 'Shared', '3:5:4', True], twinDict)
+	twin[0].addMotor(['T:MMN:5', 'Shared', '1:5:2', True], twinDict)
+	twin[1].addMotor(['T:MMN:5', 'Shared', '3:5:4', True], twinDict)
 	twinNames, _ = erfFit.makeSaveNames(twin, 'dup', askUser=False, directory=HERE)
 	check('same motor twice gives distinct files', twinNames[0] != twinNames[1], True)
 	check('the second is suffixed', os.path.basename(twinNames[1]), 'dup_Shared_2.csv')
@@ -318,12 +418,12 @@ def main():
 
 	print('\n=== a motor with no name falls back rather than blocking ===')
 	nameless = erfFit.scan()
-	nameless.addMotor(['T:M:6', 'undefined', '1:5:2', True], {})
+	nameless.addMotor(['T:MMN:6', 'undefined', '1:5:2', True], {})
 	check('scanMotorIndex finds the swept motor', erfFit.scanMotorIndex(nameless), 0)
 	check('falls back to scanN', erfFit.scanMotorName(nameless, 0, askUser=False), 'scan1')
 	check('and is 1 indexed', erfFit.scanMotorName(nameless, 2, askUser=False), 'scan3')
 	noSweep = erfFit.scan()
-	noSweep.addMotor(['T:M:7', 'Held', '5', False], {})
+	noSweep.addMotor(['T:MMN:7', 'Held', '5', False], {})
 	check('no scanning motor is None, not 0', erfFit.scanMotorIndex(noSweep), None)
 
 	print('\n=== summaryRow ===')

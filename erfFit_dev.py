@@ -12,7 +12,7 @@ from epics import caget, caput, PV
 pcdsModulePath = os.path.abspath('/cds/group/pcds/pyps/conda/py39/envs/pcds-5.9.1/lib/python3.9/site-packages/')
 sys.path.append(pcdsModulePath)
 from pcdsdevices.epics_motor import Newport
-from pcdsdecives.twincat_motor import TwinCATMREAxis
+from pcdsdevices.twincat_motor import TwinCATMREAxis
 
 from time import sleep
 
@@ -21,14 +21,14 @@ from time import sleep
 
 def motorClass(pv):
 
-    if "MMS" in pv and "MMN" in pv:
-        raise TypeError("PV has both 'MMS' and 'MMN', ask PCDS to be consistent in their naming")
+	if ':MMS:' in pv and ':MMN:' in pv:
+		raise TypeError("PV has both ':MMS:' and ':MMN:', ask PCDS to be consistent in their naming")
 
-    if "MMS" in pv:
-        cls = TwinCATMREAxis
-    elif "MMN" in pv:
-        cls = Newport
-    else:
+	if ':MMS:' in pv:
+		cls = TwinCATMREAxis
+	elif ':MMN:' in pv:
+		cls = Newport
+	else:
 		raise TypeError('{!r} is not a Newport or TwinCAT motor type'.format(pv))
 
 	return cls

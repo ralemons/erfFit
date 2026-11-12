@@ -10,10 +10,16 @@
 # callable - rather than about any hardware behaviour. The real runConfig is
 # exercised only through its argument validation, which raises before moving.
 #
-# pcdsdevices is not installed on S3DF, so ophyd's EpicsMotor is substituted for
-# Newport the same way test_scanmotors.py does it. matplotlib is stubbed because
-# erfFit imports pyplot at module scope and the backend here is QtAgg: letting
-# the real one in would put a plot window in a test run.
+# pcdsdevices is not installed on S3DF, so both motor classes are substituted
+# the same way test_scanmotors.py does it, each keeping the ophyd base it really
+# has. matplotlib is stubbed because erfFit imports pyplot at module scope and
+# the backend here is QtAgg: letting the real one in would put a plot window in
+# a test run.
+#
+# The config below pairs an MMS motor with an MMN one, so buildScanList is
+# exercised on the mixed case UED now has rather than on two motors of the same
+# type. erfFit.motorClass is string matching on the PV, so the type field in
+# these fake PVs is what decides which class each line builds.
 
 import os
 import sys
@@ -21,21 +27,42 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ophyd import EpicsMotor
+from ophyd import Component as Cpt
+from ophyd import EpicsMotor, EpicsSignal, EpicsSignalRO, PVPositioner
 
-# See test_scanmotors.py for why the stub carries EpicsMotorInterface and
-# _GetMotorClass as well as Newport.
+
 class StubMotor(EpicsMotor):
 	pass
 
+
+# See test_scanmotors.py for why the TwinCAT stand-in is a PVPositioner and why
+# the base and the leaf have to be two different classes.
+class StubTwinCATBase(PVPositioner):
+	pass
+
+
+class StubTwinCAT(StubTwinCATBase):
+	setpoint = Cpt(EpicsSignal, '.VAL')
+	readback = Cpt(EpicsSignal, '.RBV')
+	done = Cpt(EpicsSignalRO, '.DMOV')
+	done_value = 1
+
+
 fakePcds = types.ModuleType('pcdsdevices')
+
 fakeMotor = types.ModuleType('pcdsdevices.epics_motor')
 fakeMotor.Newport = StubMotor
 fakeMotor.EpicsMotorInterface = EpicsMotor
-fakeMotor._GetMotorClass = lambda pv: StubMotor
+
+fakeTwinCAT = types.ModuleType('pcdsdevices.twincat_motor')
+fakeTwinCAT.TwinCATMotorInterface = StubTwinCATBase
+fakeTwinCAT.TwinCATMREAxis = StubTwinCAT
+
 fakePcds.epics_motor = fakeMotor
+fakePcds.twincat_motor = fakeTwinCAT
 sys.modules['pcdsdevices'] = fakePcds
 sys.modules['pcdsdevices.epics_motor'] = fakeMotor
+sys.modules['pcdsdevices.twincat_motor'] = fakeTwinCAT
 
 fakeMpl = types.ModuleType('matplotlib')
 fakePlt = types.ModuleType('matplotlib.pyplot')
@@ -93,15 +120,17 @@ def writeConfig(path, body):
 
 # A two scan config, each scan sweeping one motor and holding the other. The
 # same two PVs appear in both scans, which is the normal UED H/V pair shape.
+# X is an MMS and Y an MMN, so the pair is one TwinCAT axis and one Newport -
+# the shape of solidState_KnifeEdge.txt now that the chamber motor has changed.
 TWO_SCANS = (
 	'2\n'
 	'2,1,4\n'
-	'T:M:X,X Motor,1:5:3,True\n'
-	'T:M:Y,Y Motor,7,False\n'
+	'T:MMS:X,X Motor,1:5:3,True\n'
+	'T:MMN:Y,Y Motor,7,False\n'
 	'T:D:1\n'
 	'2,1,4\n'
-	'T:M:X,X Motor,2,False\n'
-	'T:M:Y,Y Motor,10:5:14,True\n'
+	'T:MMS:X,X Motor,2,False\n'
+	'T:MMN:Y,Y Motor,10:5:14,True\n'
 	'T:D:1\n')
 
 
@@ -130,15 +159,15 @@ def main():
 	check('config parsed', doc.error, None)
 	motor = doc.scans[0].motors[0]
 	check('scanning motor userInput', motor.userInput(),
-		['T:M:X', 'X Motor', '1:5:3', True])
+		['T:MMS:X', 'X Motor', '1:5:3', True])
 	check('fixed motor userInput', doc.scans[0].motors[1].userInput(),
-		['T:M:Y', 'Y Motor', '7', False])
+		['T:MMN:Y', 'Y Motor', '7', False])
 	# runConfig tests 'indep is True' / 'is False'. A numpy bool or a string
 	# would make a motor neither swept nor held, and it would be skipped with no
 	# data and no error.
 	check('indep is a real bool', type(motor.userInput()[3]), bool)
 	check('configLine still agrees with userInput', motor.configLine(),
-		'T:M:X,X Motor,1:5:3,True')
+		'T:MMS:X,X Motor,1:5:3,True')
 
 	print('\n=== an edit reaches the scan, unsaved ===')
 	# The whole point of building scans from the specs: the user edits the range
@@ -163,13 +192,24 @@ def main():
 		scanList[0].motors[0] is scanList[1].motors[0], True)
 	check('indep differs per scan for the same device',
 		(scanList[0].indep[0], scanList[1].indep[0]), (True, False))
+	# buildScanList resolves the class per motor line, so a config mixing the
+	# two types must come back with one of each rather than two of whichever
+	# the first line named.
+	check('the MMS line built a TwinCAT axis',
+		isinstance(scanList[0].motors[0], StubTwinCAT), True)
+	check('the MMN line built a Newport',
+		isinstance(scanList[0].motors[1], StubMotor), True)
+	check('and the shared X device is the TwinCAT one',
+		isinstance(devices.devices['T:MMS:X'], StubTwinCAT), True)
 
 	print('\n=== exactly one scanning motor is required ===')
 	# erfFit.loadConfig and updateMotors both insist on this, so the GUI has to
 	# refuse first. Two scanning motors was the dangerous case: runConfig's loop
 	# has no break, so it swept both into one filename.
+	# The PVs here have to name a real motor type, or motorClass refuses them
+	# first and the TypeError hides the indep problem this is checking for.
 	twoIndep = writeConfig(os.path.join(tmp, 'tsr_two_indep.txt'),
-		'1\n2,1,4\nT:M:A,A,1:5:2,True\nT:M:B,B,3:5:4,True\nT:D:1\n')
+		'1\n2,1,4\nT:MMN:A,A,1:5:2,True\nT:MMN:B,B,3:5:4,True\nT:D:1\n')
 	badDoc = erfFitConfig.parseConfigFile(twoIndep)
 	problems = badDoc.validate()
 	check('two scanning motors is a problem', len(problems), lambda n: n >= 1)
@@ -179,7 +219,7 @@ def main():
 		lambda: erfFit.loadConfig(twoIndep, {}), ValueError)
 
 	noneIndep = writeConfig(os.path.join(tmp, 'tsr_zero_indep.txt'),
-		'1\n1,1,4\nT:M:A,A,5,False\nT:D:1\n')
+		'1\n1,1,4\nT:MMN:A,A,5,False\nT:D:1\n')
 	zeroDoc = erfFitConfig.parseConfigFile(noneIndep)
 	check('zero scanning motors is a problem too', ' '.join(zeroDoc.validate()),
 		lambda s: 'exactly 1 scanning motor' in s and 'has 0' in s)
@@ -266,7 +306,7 @@ def main():
 
 	print('\n=== a failure is reported, not raised ===')
 	def brokenRunConfig(scanConfig, **kwargs):
-		raise RuntimeError('T:M:X did not reach 3 within 20.0s')
+		raise RuntimeError('T:MMS:X did not reach 3 within 20.0s')
 
 	stubBroken = types.ModuleType('erfFitStubBroken')
 	stubBroken.runConfig = brokenRunConfig

@@ -27,17 +27,23 @@
 # device objects the jog rows poll and a jog would move a motor out from under
 # the sweep. Stop all stays live throughout.
 #
-# Moves go through the Newport device the scans already use, built by
-# erfFit.getMotor, by way of its mv() and mvr() methods. Those are
-# non-blocking, unlike move(), whose wait argument defaults to True and would
-# freeze the window for the whole travel. Progress is polled from the shared
-# timer.
+# Moves go through the device the scans already use, built by erfFit.getMotor,
+# by way of its mv() and mvr() methods. Those are non-blocking, unlike move(),
+# whose wait argument defaults to True and would freeze the window for the whole
+# travel. Progress is polled from the shared timer.
+#
+# A device is a pcdsdevices Newport or a TwinCATMREAxis, decided by the motor
+# PV: erfFit.motorClass reads the type field out of the name. Nothing in this
+# file branches on which one it got. mv, mvr, stop, position, egu and moving are
+# all common to the two, because both mix in FltMvInterface, and the places
+# where they genuinely differ - what check_value covers, and which component
+# carries .DMOV - are handled in erfFit and noted where they are relied on.
 #
 # Note this module does NOT import erfFit, on purpose. erfFit.loadConfig() calls
-# scan.addMotor(), which builds Newport device objects, so just loading a config
-# through erfFit would connect to live EPICS motors. Config parsing lives in
-# erfFitConfig.py, which imports nothing but os, so opening a file in this GUI
-# never touches hardware. Connecting is a separate, explicit button.
+# scan.addMotor(), which builds live motor device objects, so just loading a
+# config through erfFit would connect to live EPICS motors. Config parsing lives
+# in erfFitConfig.py, which imports nothing but os, so opening a file in this
+# GUI never touches hardware. Connecting is a separate, explicit button.
 
 import sys
 import os
@@ -1695,10 +1701,19 @@ class MotorRow(QWidget):
 			'moving to {}'.format(erfFitConfig.fmtNum(target)), target)
 
 	def checkTarget(self, target):
-		# check_value covers the soft limits, the .SPG stop/pause state and the
-		# disabled flag in one call, raising LimitError or MotorDisabledError.
-		# Worth doing before the move: mv() catches LimitError internally and
-		# only reports it through the returned status, which is easy to miss.
+		# check_value covers the soft limits and the disabled flag in one call,
+		# raising LimitError or MotorDisabledError. Worth doing before the move:
+		# mv() catches LimitError internally and only reports it through the
+		# returned status, which is easy to miss.
+		#
+		# What it covers is not identical across the two motor types, so do not
+		# read a refusal here as the only thing standing between a jog and the
+		# hardware. A Newport goes through PCDSMotorBase.check_value, which also
+		# refuses a move while .SPG is on Stop or Pause. A TwinCAT axis instead
+		# checks that the velocity is nonzero and that the soft limits are
+		# actually PLC-enabled, and does NOT look at .SPMG, the field that plays
+		# .SPG's part on a tcmotor record. Either way the record itself still
+		# refuses the move; this is a pre-flight check, not the safety.
 		try:
 			self.device.check_value(target)
 		except Exception as e:
@@ -1916,11 +1931,12 @@ class MotorRow(QWidget):
 		# number to try and hit, or 0.002 mm (2 um) is the fallback.
 		#
 		# In practice the fallback is what gets used. retry_deadband is NOT a
-		# component of ophyd's EpicsMotor, nor of pcdsdevices' Newport or
-		# anything it derives from, so this read raises AttributeError on a real
-		# motor at UED too, not only on the test stubs. Kept because a device
-		# that does map .RDBD would be worth honouring, but the 2 um is the
-		# number that actually decides arrival. Matches erfFit.arrivalTolerance.
+		# component of ophyd's EpicsMotor, nor of pcdsdevices' Newport, nor of
+		# TwinCATMREAxis, which binds plenty of tcmotor fields but not .RDBD, so
+		# this read raises AttributeError on a real motor at UED too, not only
+		# on the test stubs. Kept because a device that does map .RDBD would be
+		# worth honouring, but the 2 um is the number that actually decides
+		# arrival. Matches erfFit.arrivalTolerance.
 		try:
 			value = float(self.device.retry_deadband.get())
 			if value > 0:
@@ -2134,8 +2150,11 @@ def buildScanList(doc, module, devices):
 
 		for motor in spec.motors:
 			try:
-				# Goes through addMotor rather than scan(motorList=...), which
-				# type checks for Newport and would reject anything else.
+				# Goes through addMotor rather than scan(motorList=...), so the
+				# class is resolved from each PV as the scan is built and the
+				# device lands in the shared dict on the way. scan(motorList=)
+				# takes already built devices and only type checks them, which
+				# is a different job.
 				oneScan.addMotor(motor.userInput(), devices)
 			except Exception as e:
 				return None, 'scan {}, {}: {}: {}'.format(

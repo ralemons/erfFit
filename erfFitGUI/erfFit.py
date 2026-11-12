@@ -10,7 +10,8 @@ from epics import caget, caput, PV
 
 pcdsModulePath = os.path.abspath('/cds/group/pcds/pyps/conda/py39/envs/pcds-5.9.1/lib/python3.9/site-packages/')
 sys.path.append(pcdsModulePath)
-from pcdsdevices.epics_motor import EpicsMotorInterface, _GetMotorClass
+from pcdsdevices.epics_motor import EpicsMotorInterface, Newport
+from pcdsdevices.twincat_motor import TwinCATMotorInterface, TwinCATMREAxis
 from ophyd.utils import DisconnectedError
 
 from time import sleep, time
@@ -23,6 +24,10 @@ from time import sleep, time
 # Where a run writes its csv files.
 SAVE_DIR_VAR = 'ERFFIT_DATA_DIR'
 DEFAULT_SAVE_DIR = '/sdf/home/u/uedopr/rlemons/opsKnifeScans'
+
+# Where to read config files for a run
+CONFIG_DIR_VAR = 'ERFFIT_CONFIG_DIR'
+DEFAULT_CONFIG_DIR = '/sdf/home/u/uedopr/rlemons/erfFit/configs'
 
 # Minimum time before .DMOV is believed (waiting for the PV to update)
 posReadMin = 0.2
@@ -60,11 +65,15 @@ def saveDir():
 
 def motorClass(pv):
 
-	# Just check the class PV given is a supported pcds EpicsMotor
-	cls = _GetMotorClass(pv)
+	if ':MMS:' in pv and ':MMN:' in pv:
+		raise TypeError("PV has both ':MMS:' and ':MMN:', ask PCDS to be consistent in their naming")
 
-	if not issubclass(cls, EpicsMotorInterface):
-		raise TypeError('{!r} is not a PCDS EpicsMotorInterface motor type'.format(pv))
+	if ':MMS:' in pv:
+		cls = TwinCATMREAxis
+	elif ':MMN:' in pv:
+		cls = Newport
+	else:
+		raise TypeError('{!r} is not a Newport or TwinCAT motor type'.format(pv))
 
 	return cls
 
@@ -104,7 +113,7 @@ class scan:
 
 		if motorList is None:
 			self.motors = []
-		elif isinstance(motorList, list) and all(isinstance(item, EpicsMotorInterface) for item in motorList):
+		elif isinstance(motorList, list) and all(isinstance(item, (EpicsMotorInterface,TwinCATMotorInterface)) for item in motorList):
 			self.motors = list(motorList)
 		else:
 			raise TypeError('motorList must be a list of pcdsdevices motor objects')
@@ -217,10 +226,16 @@ def arrivalTolerance(motor):
 def isMoving(motor):
 
 	# True/False from .DMOV, or None if motor has no .DMOV to read.
+	# Both classes map .DMOV, under different names
 	try:
-		return not bool(motor.motor_done_move.get(use_monitor=False))
+		if isinstance(motor, EpicsMotorInterface):
+			return not bool(motor.motor_done_move.get(use_monitor=False))
+		elif isinstance(motor, TwinCATMotorInterface):
+			return not bool(motor.done.get(use_monitor=False))
 	except motorErrors:
 		return None
+
+	return None
 
 
 def readPosition(motor):

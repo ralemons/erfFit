@@ -4,9 +4,10 @@
 # This module deliberately imports NOTHING but os.
 #
 # It does not import erfFit, pcdsdevices, epics, or Qt. That is the whole point:
-# erfFit.loadConfig() calls scan.addMotor(), which constructs motor(Newport)
-# objects, so simply LOADING a config file with erfFit connects to live EPICS
-# motors. A display-only viewer must never do that, so it parses the text itself.
+# erfFit.loadConfig() calls scan.addMotor(), which constructs a Newport or a
+# TwinCATMREAxis per motor line, so simply LOADING a config file with erfFit
+# connects to live EPICS motors. A display-only viewer must never do that, so it
+# parses the text itself.
 #
 # This parser is also more tolerant than erfFit.loadConfig(). Its clean() helper
 # assumes exactly 4 comma fields per motor line, so the legacy 3-field format in
