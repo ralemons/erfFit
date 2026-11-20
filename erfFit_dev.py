@@ -1,4 +1,3 @@
-import sys
 import os
 
 import numpy as np
@@ -9,8 +8,7 @@ import csv
 import pickle
 from epics import caget, caput, PV
 
-pcdsModulePath = os.path.abspath('/cds/group/pcds/pyps/conda/py39/envs/pcds-5.9.1/lib/python3.9/site-packages/')
-sys.path.append(pcdsModulePath)
+# pcdsdevices comes from ued3
 from pcdsdevices.epics_motor import Newport
 from pcdsdevices.twincat_motor import TwinCATMREAxis
 

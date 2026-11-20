@@ -30,19 +30,16 @@ MODULE_DIR_VAR = 'ERFFIT_MODULE_DIR'
 # location is kept at the end of each list, harmlessly, in case these files are
 # ever run somewhere that still has it mounted.
 UED_HOME = '/sdf/home/u/uedopr'
-UED_HOME_OLD = '/cds/home/opr/uedopr'
 
 CONFIG_DIR_FALLBACKS = [
 	'~/erfFitGUI',
 	'~/knifeEdgeConfigs',
-	UED_HOME + '/rlemons/erfFitGUI',
-	UED_HOME_OLD + '/rlemons/erfFitGUI',
+	UED_HOME + '/rlemons/erfFit/erfFitGUI',
 ]
 
 DATA_DIR_FALLBACKS = [
 	'~/opsKnifeScans',
 	UED_HOME + '/rlemons/opsKnifeScans',
-	UED_HOME_OLD + '/rlemons/opsKnifeScans',
 	'./opsKnifeScans',
 	'./exampleData',
 ]

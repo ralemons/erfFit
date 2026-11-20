@@ -1,11 +1,9 @@
-#!/cds/sw/ds/ana/conda2/inst/envs/ps-4.6.3/bin/python
+#!/reg/g/pcds/pyps/pixi/ctrlenv-bluesky/latest-released/src/rhel9-x86_64/.pixi/envs/default/bin/python
 # Viewer GUI for erfFit knife edge scan configs
 # Randy Lemons
 
-# The shebang above is the UED environment, matching the other scripts in this
-# folder. The uedopr account does not set an environment in its shell startup,
-# so the interpreter has to be named here.
-#
+# The shebang above is the ctrlenv-bluesky pixi env, the same one ued3 loads.
+
 # To run somewhere else without editing this line, call the interpreter
 # directly, for example on S3DF:
 #	/sdf/group/lcls/ds/ana/sw/conda2/inst/envs/ps-4.6.3/bin/python erfFit_GUI.py
