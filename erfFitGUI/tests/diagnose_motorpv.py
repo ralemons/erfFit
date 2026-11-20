@@ -1,4 +1,4 @@
-#!/cds/sw/ds/ana/conda2/inst/envs/ps-4.6.3/bin/python
+#!/reg/g/pcds/pyps/pixi/ctrlenv-bluesky/latest-released/src/rhel9-x86_64/.pixi/envs/default/bin/python
 # Randy Lemons
 
 # Why does a MotorRow say "disconnected"?
@@ -17,11 +17,13 @@
 #
 # It also reports what the resolved motor class IS, which matters now that
 # there are two of them. A Newport and a TwinCATMREAxis have no common base
-# below FltMvInterface and carry .DMOV under different names, and pcdsdevices is
-# not installed on S3DF, so the suites there can only check that against a
-# stand-in they wrote themselves. This script is the only place the REAL class
-# gets inspected, so run it once per motor type after any change to
-# erfFit.motorClass or erfFit.isMoving.
+# below FltMvInterface and carry .DMOV under different names. The fast suites
+# check that against stand-ins they wrote themselves, and test_stubconform.py
+# checks those stand-ins against real pcdsdevices wherever it will import, so
+# the class layout is already covered off hardware. What only this script can
+# do is inspect a real class bound to a LIVE record, which is where a field
+# the stubs cannot know about goes missing. Run it once per motor type after
+# any change to erfFit.motorClass or erfFit.isMoving.
 #
 # Run it at UED, where EPICS is reachable. It reads only: no motor moves.
 #

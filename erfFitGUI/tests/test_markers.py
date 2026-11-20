@@ -244,7 +244,10 @@ def main():
 	check('cross 2 is at its pixel',
 		(panel.markerItems[1].getData()[0][0], panel.markerItems[1].getData()[1][0]),
 		(30.0, 40.0))
-	check('nothing in the blue item', len(panel.markerItems[0].getData()[0] or []), 0)
+	# Same `is not None` guard as drawn(): an unset ScatterPlotItem gives None on
+	# pyqtgraph 0.13.3 but an empty array on 0.14.0, and `or []` on an array raises.
+	blueXs = panel.markerItems[0].getData()[0]
+	check('nothing in the blue item', 0 if blueXs is None else len(blueXs), 0)
 
 	panel.drawMarkers([(1.0, 2.0, 1), (3.0, 4.0, 2), (5.0, 6.0, 3), (7.0, 8.0, 4)])
 	check('all four', drawn(panel), {1: 1, 2: 1, 3: 1, 4: 1})
